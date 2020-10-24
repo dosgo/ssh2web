@@ -1,0 +1,281 @@
+<!doctype html>
+<html>
+<head>
+    <link rel="stylesheet" href="css/xterm.css" />
+    <script src="js/xterm.js"></script>
+    <script src="js/FitAddon.js"></script>
+    <script src="js/AttachAddon.js"></script>
+</head>
+<body>
+<span>host:</span><input type="text"  id="host">
+<span>user:</span><input type="text"  value="root" id="user">
+<span>password:</span><input type="text"  id="password">
+<button onclick="connetClick();">连接</button>
+<div id="terminal"></div>
+
+
+</body>
+</html>
+<script>
+    function connetClick(){
+        var password=document.getElementById('password').value
+        var host=document.getElementById('host').value
+        var user=document.getElementById('user').value
+        connectSsh(user,host,password);
+    }
+
+    var ws
+    function connectSsh(user, host, password)
+    {
+        if ("WebSocket" in window)
+        {
+            var json={"user":user,"host":host,"password":password,"key":""};
+            var token=window.btoa(JSON.stringify(json));
+            // 打开一个 web socket
+            ws = new WebSocket("wss://"+window.location.host+"/ssh?token="+token);
+            ws.onopen = function() {
+                // Web Socket 已连接上，使用 send() 方法发送数据
+            };
+            ws.onmessage = function (evt) {
+                console.log("数据已接收...");
+                var _data = evt.data;
+                var data=typeof _data === 'string' ? _data : new Uint8Array(_data)
+                if(conf.oneSend){
+                    conf.prefix=data;
+                }
+                terminal.write(data);
+            };
+            ws.onclose = function() {
+                // 关闭 websocket
+                console.log("连接已关闭...");
+            };
+        } else {
+            // 浏览器不支持 WebSocket
+            console.log("您的浏览器不支持 WebSocket!");
+        }
+    }
+    function connectSsh1()
+    {
+        if ("WebSocket" in window)
+        {
+            var json={"user":"root","host":"192.168.8.229:22","password":"sdf888888","key":""};
+            var token=window.btoa(JSON.stringify(json));
+            // 打开一个 web socket
+            ws = new WebSocket("wss://"+window.location.host+"/ssh?token="+token);
+            terminal.loadAddon(new AttachAddon(ws))
+        } else {
+            // 浏览器不支持 WebSocket
+            console.log("您的浏览器不支持 WebSocket!");
+        }
+    }
+
+   // connectSsh();
+
+
+    var conf= {
+        termOptions: {
+            rows: 40,
+            scrollback: 800
+        },
+        input: '',
+        prefix: 'ashin$ ',
+        // 历史指令
+        histIndex: 0,
+        histCommandList: [],
+        currentOffset: Number,
+        oneSend:true,
+    }
+
+    var terminal=initTerm();
+
+    function initTerm() {
+        var term = new Terminal({
+            rendererType: 'canvas',
+            cursorBlink: true,
+            convertEol: true,
+            scrollback: conf.termOptions.scrollback,
+            row: conf.termOptions.rows,
+            theme: {
+                foreground: 'white',
+                background: '#060101'
+            }
+        })
+        term.open(document.getElementById('terminal'))
+        term.loadAddon(new FitAddon());
+        term.focus()
+        term.writeln(`Hello from web terminal`)
+        term.prompt = () => {
+            console.log("777",term);
+            term.write(conf.prefix)
+        }
+
+        term.onKey(function(_key) {
+            console.log('key',_key)
+            let ev=_key.domEvent;
+            let key=ev.key;
+            const printable = !ev.altKey && !ev.altGraphKey && !ev.ctrlKey && !ev.metaKey
+            // 每行开头前缀长度 @ashinWu:$
+            const threshold = conf.prefix.length
+            // 总偏移(长度) = 输入+前缀
+            let fixation = conf.input.length + threshold
+            // 当前x偏移量
+            let offset = term._core.buffer.x
+            conf.currentOffset = fixation
+            // 禁用Home、PgUp、PgDn、Ins、Del键
+            if ([36, 33, 34, 45, 46].indexOf(ev.keyCode) !== -1) return
+
+            console.log('key','ev',key,ev)
+
+            switch(ev.keyCode) {
+                // 回车键
+                case 13:
+                    handleInput()
+                    conf.input = ''
+                    break;
+                // 退格键
+                case 8:
+                    if (offset > threshold) {
+                        term._core.buffer.x = offset - 1
+                        // \x1b[?K: 清除光标至行末的"可清除"字符
+                        term.write('\x1b[?K' + conf.input.slice(offset - threshold))
+                        // 保留原来光标位置
+                        const cursor = bulidData(fixation - offset, '\x1b[D')
+                        term.write(cursor)
+                        conf.input = `${conf.input.slice(0, offset - threshold - 1)}${conf.input.slice(offset - threshold)}`
+                    }
+                    break;
+                case 35:
+                    const cursor = bulidData(fixation - offset, '\x1b[C')
+                    term.write(cursor)
+                    break
+                // 方向盘上键
+                case 38:
+                    if (conf.histCommandList[conf.histIndex - 1]) {
+                        // 将光标重置到末端
+                        term._core.buffer.x = fixation
+                        let b1 = '', b2 = '', b3 = '';
+                        // 构造退格(模拟替换效果) \b \b标识退一格; \b\b  \b\b表示退两格...
+                        for (let i = 0; i < conf.input.length; i++) {
+                            b1 = b1 + '\b'
+                            b2 = b2 + ' '
+                            b3 = b3 + '\b'
+                        }
+                        term.write(b1 + b2 + b3)
+                        conf.input = conf.histCommandList[conf.histIndex - 1]
+                        term.write(conf.histCommandList[conf.histIndex - 1])
+                        conf.histIndex--
+                    }
+                    break;
+                // 方向盘下键
+                case 40:
+                    if (conf.histCommandList[conf.histIndex + 1]) {
+                        // 将光标重置到末端
+                        term._core.buffer.x = fixation
+                        let b1 = '', b2 = '', b3 = '';
+                        // 构造退格(模拟替换效果) \b \b标识退一格; \b\b  \b\b表示退两格...
+                        for (let i = 0; i < conf.histCommandList[conf.histIndex].length; i++) {
+                            b1 = b1 + '\b'
+                            b2 = b2 + ' '
+                            b3 = b3 + '\b'
+                        }
+                        conf.input = conf.histCommandList[conf.histIndex + 1]
+                        term.write(b1 + b2 + b3)
+                        term.write(conf.histCommandList[conf.histIndex + 1])
+                        conf.histIndex++
+                    }
+                    break;
+                // 方向盘左键
+                case 37:
+                    if (offset > threshold) {
+                        term.write(key)
+                    }
+                    break;
+                // 方向盘右键
+                case 39:
+                    if (offset < fixation) {
+                        term.write(key)
+                    }
+                    break;
+                default:
+                    if (printable) {
+                        // 限制输入最大长度 防止换行bug
+                        if (fixation >= term.cols)  return
+
+                        // 不在末尾插入时 要拼接
+                        if (offset < fixation) {
+                            term.write('\x1b[?K' + `${key}${conf.input.slice(offset - threshold)}`)
+                            const cursor = bulidData(fixation - offset, '\x1b[D')
+                            term.write(cursor)
+                            conf.input = `${conf.input.slice(0, offset - threshold)}${key}${conf.input.slice(offset - threshold)}`
+                        } else {
+                            term.write(key)
+                            conf.input += key
+                        }
+                        conf.histIndex = conf.histCommandList.length
+                    }
+                    break;
+            }
+
+        });
+        console.log("term",term)
+        // 选中复制
+        term.onSelectionChange(function() {
+            if (term.hasSelection()) {
+                conf.copy = term.getSelection()
+            }
+        });
+
+        term.attachCustomKeyEventHandler(function (ev) {
+            // curl+v
+            if (ev.keyCode === 86 && ev.ctrlKey) {
+                const inline = (conf.currentOffset + conf.copy.length) >= term.cols
+                if (inline) return
+                if (conf.copy) {
+                    term.write(conf.copy)
+                    conf.input += conf.copy
+                }
+            }
+        });
+        // 若需要中文输入, 使用on data监听
+        term.onData(function(data){
+            ws.send(data);
+            conf.oneSend=false;
+         // todo something
+        })
+        return term
+    }
+
+
+    function bulidData(length, subString) {
+        let cursor = ''
+        for (let i = 0; i < length; i++) {
+            cursor += subString
+        }
+        return cursor;
+    }
+    // 在这里处理自定义输入...
+    function handleInput()
+    {
+        // 判断空值
+        terminal.write('\r\n')
+        if (conf.input.trim()) {
+            // 记录历史命令
+            if (conf.histCommandList[conf.histCommandList.length - 1] !== conf.input) {
+                conf.histCommandList.push(conf.input)
+                conf.histIndex = conf.histCommandList.length
+            }
+            const command = conf.input.trim().split(' ')
+            // 可限制可用命令
+            // 这里进行socket交互
+            switch (command[0]) {
+                case 'help':
+                    terminal.writeln('\x1b[40;33;1m\nthis is a web terminal demo based on xterm!\x1b[0m\n此demo模拟shell上下左右和退格键效果\n')
+                    break
+                default:
+                    terminal.writeln(conf.input)
+                    break
+            }
+        }
+       // terminal.prompt()
+    }
+</script>
